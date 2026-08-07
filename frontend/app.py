@@ -26,7 +26,8 @@ st.set_page_config(
 )
 
 # ---- 后端API地址 ----
-API_BASE = os.getenv("API_BASE", "http://localhost:8000")
+# 本地开发默认 localhost，云端部署时设置环境变量 API_BASE 或 BACKEND_URL
+API_BASE = os.getenv("API_BASE", os.getenv("BACKEND_URL", "http://localhost:8000"))
 
 
 # ============================================================
@@ -174,34 +175,40 @@ with st.sidebar:
     )
 
     if uploaded_file:
-        with st.spinner("正在解析数据文件..."):
-            try:
-                files = {"file": (uploaded_file.name, uploaded_file.getvalue())}
-                resp = requests.post(
-                    f"{API_BASE}/api/datasources/upload",
-                    files=files,
-                    timeout=60,
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    sid = data["source_id"]
-                    st.session_state.sources_info[sid] = {
-                        "display_name": data["display_name"],
-                        "source_type": data["source_type"],
-                        "tables": data.get("tables", []),
-                    }
-                    if sid not in st.session_state.active_sources:
-                        st.session_state.active_sources.append(sid)
-                    st.success(f"✅ {data['display_name']} 已加载")
-                    st.rerun()
-                else:
-                    detail = resp.json().get("detail", resp.text)
-                    st.error(f"上传失败: {detail}")
-            except requests.ConnectionError:
-                st.warning("⚠️ 后端服务未启动。请在终端执行:")
-                st.code("uvicorn backend.api.main:app --reload --port 8000")
-            except Exception as e:
-                st.error(f"上传异常: {e}")
+        # 用文件名+大小做指纹，避免 st.rerun() 后重复上传
+        file_fingerprint = f"{uploaded_file.name}_{uploaded_file.size}"
+        if st.session_state.get("_last_uploaded") == file_fingerprint:
+            pass  # 已处理过，跳过
+        else:
+            with st.spinner("正在解析数据文件..."):
+                try:
+                    files = {"file": (uploaded_file.name, uploaded_file.getvalue())}
+                    resp = requests.post(
+                        f"{API_BASE}/api/datasources/upload",
+                        files=files,
+                        timeout=120,
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        sid = data["source_id"]
+                        st.session_state.sources_info[sid] = {
+                            "display_name": data["display_name"],
+                            "source_type": data["source_type"],
+                            "tables": data.get("tables", []),
+                        }
+                        if sid not in st.session_state.active_sources:
+                            st.session_state.active_sources.append(sid)
+                        st.session_state["_last_uploaded"] = file_fingerprint
+                        st.success(f"✅ {data['display_name']} 已加载 ({len(data.get('tables',[]))} 张表)")
+                        st.rerun()
+                    else:
+                        detail = resp.json().get("detail", resp.text)
+                        st.error(f"上传失败: {detail}")
+                except requests.ConnectionError:
+                    st.warning("⚠️ 后端服务未启动。请在终端执行:")
+                    st.code("uvicorn backend.api.main:app --reload --port 8000")
+                except Exception as e:
+                    st.error(f"上传异常: {e}")
 
     # ---- 已连接的数据源 ----
     if st.session_state.active_sources:

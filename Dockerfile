@@ -1,24 +1,25 @@
+# ============================================================
+# 智能数据分析系统 - 云端部署 Dockerfile
+# 构建: docker build -t ai-data-analysis .
+# 运行: docker run -p 8000:8000 -p 8501:8501 -e DEEPSEEK_API_KEY="sk-xxx" ai-data-analysis
+# ============================================================
+
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# 安装系统依赖
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc g++ \
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 安装Python依赖
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 复制项目文件
-COPY backend/ ./backend/
-COPY frontend/ ./frontend/
-COPY config/ ./config/
-COPY data/ ./data/
+COPY . .
+RUN mkdir -p /app/data/uploads
 
-# 暴露端口
 EXPOSE 8000 8501
 
-# 启动后端
-CMD ["uvicorn", "backend.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+ENTRYPOINT ["docker-entrypoint.sh"]

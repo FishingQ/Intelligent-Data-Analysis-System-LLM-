@@ -192,19 +192,36 @@ async def chat(request: ChatRequest):
                 error="SQL校验失败",
             )
 
-        # Step 6: 执行查询
-        # 取第一个数据源的适配器执行（多源情况后续优化）
-        primary_source = source_configs[0]
-        adapter = DataSourceFactory.get_or_create(primary_source)
+        # Step 6: 执行查询 —— 多数据源支持
+        # 遍历所有活跃数据源，找到包含目标表的适配器执行
+        result = None
+        last_error = None
+        for src_cfg in source_configs:
+            adapter = DataSourceFactory.get_or_create(src_cfg)
+            if not adapter or not adapter.is_connected:
+                continue
+            result = _query_executor.execute(query, adapter)
+            if result.success:
+                break
+            last_error = result.error_message
 
-        if not adapter or not adapter.is_connected:
+        if result is None:
             return ChatResponse(
                 conversation_id=request.conversation_id,
                 answer_text="数据源连接已断开，请重新连接。",
                 error="数据源未连接",
             )
 
-        result = _query_executor.execute(query, adapter)
+        if not result.success:
+            return ChatResponse(
+                conversation_id=request.conversation_id,
+                answer_text=(
+                    f"查询执行失败：{last_error}\n\n"
+                    f"SQL:\n```sql\n{query.code}\n```"
+                ),
+                generated_sql=query.code,
+                error=f"SQL执行失败: {last_error}",
+            )
 
         # ---- Phase 3: 进阶分析 ----
         anomaly_result = None
