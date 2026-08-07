@@ -1,0 +1,56 @@
+# ============================================================
+# 智能数据分析系统 —— 配置文件
+#
+# 重要: 此文件仅包含非敏感默认值
+# API Key 等敏感信息请通过系统环境变量配置:
+#   Windows: setx DEEPSEEK_API_KEY "sk-your-key"
+#   Linux:   export DEEPSEEK_API_KEY="sk-your-key"
+# ============================================================
+
+# ---- LLM 大模型配置 ----
+# api_key 从环境变量 DEEPSEEK_API_KEY 读取，不在此文件中存储
+llm:
+  provider: "deepseek"              # deepseek | jiutian | openai | qwen
+  model: "deepseek-chat"
+  base_url: "https://api.deepseek.com/v1"
+  temperature: 0.1                  # SQL生成用低温保证确定性
+  max_tokens: 4096
+  timeout: 60                       # 请求超时(秒)
+  max_retries: 2
+
+# ---- 数据源配置 ----
+data:
+  upload_dir: "./data/uploads"
+  max_file_size_mb: 50
+  supported_extensions:
+    - ".xlsx"
+    - ".xls"
+    - ".csv"
+    - ".sqlite"
+    - ".db"
+
+# ---- 服务器配置 ----
+server:
+  host: "0.0.0.0"
+  port: 8000
+  cors_origins:
+    - "*"
+
+# ---- 分析引擎配置 ----
+analysis:
+  max_sql_length: 10000             # 单条SQL最大长度
+  max_result_rows: 10000            # 结果集最大行数
+  query_timeout_seconds: 30
+  max_conversation_turns: 20        # 多轮对话最大轮数
+
+# ---- 可视化配置 ----
+visualization:
+  default_theme: "light"
+  max_pie_categories: 8            # 饼图最多分类数
+  max_bar_categories: 20           # 柱状图最多分类数
+
+# ---- 日志配置 ----
+logging:
+  level: "INFO"                     # DEBUG | INFO | WARNING | ERROR
+  format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+  file: "./logs/app.log"           # 留空=仅控制台输出

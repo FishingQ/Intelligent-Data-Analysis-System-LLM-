@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# 环境变量
+.env
+
+# 上传数据
+data/uploads/*
+!data/uploads/.gitkeep
+
+# 日志
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Streamlit
+.streamlit/secrets.toml
+
+# 临时文件
+*.tmp
+.DS_Store
+Thumbs.db
+
+# RAG文档（训练数据）
+data/rag_docs/*
+
+# Claude配置
+.claude/
+
+# 测试覆盖
+.coverage
+htmlcov/
+
+# 压缩包
+*.zip
+*.7z
+
+# Excel训练数据 (体积过大，通过其他方式分发)
+*.xlsx

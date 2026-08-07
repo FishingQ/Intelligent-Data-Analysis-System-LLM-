@@ -1,0 +1,74 @@
+version: "3.9"
+
+services:
+  # ==================== 后端 API ====================
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wutong-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4o}
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///data/wutong.db}
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ==================== 前端 ====================
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: wutong-frontend
+    ports:
+      - "8501:8501"
+    environment:
+      - BACKEND_URL=http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ==================== MySQL (可选) ====================
+  mysql:
+    image: mysql:8.0
+    container_name: wutong-mysql
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-wutong123}
+      MYSQL_DATABASE: wutong
+    volumes:
+      - mysql_data:/var/lib/mysql
+    restart: unless-stopped
+    profiles:
+      - with-db
+
+  # ==================== PostgreSQL (可选) ====================
+  postgres:
+    image: postgres:16
+    container_name: wutong-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wutong123}
+      POSTGRES_DB: wutong
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    profiles:
+      - with-db
+
+volumes:
+  mysql_data:
+  postgres_data:
