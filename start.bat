@@ -1,63 +1,102 @@
 @echo off
+setlocal EnableExtensions
 chcp 65001 >nul
-title 梧桐引力 - 智能数据分析系统
+title Wutong Gravity - AI Data Analysis
+
+cd /d "%~dp0"
+set "PROJECT_DIR=%CD%"
 
 echo ========================================
-echo   梧桐引力 - 智能数据分析系统
 echo   Wutong Gravity - AI Data Analysis
 echo ========================================
 echo.
 
-:: 检查 Python
 python --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] 未找到 Python，请先安装 Python 3.10+
+if errorlevel 1 (
+    echo [ERROR] Python was not found. Please install Python 3.10+.
     pause
     exit /b 1
 )
 
-:: 切换到脚本所在目录（处理中文路径）
-cd /d "%~dp0"
+python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] Python 3.10+ is required.
+    python --version
+    pause
+    exit /b 1
+)
 
-:: 将 Python Scripts 目录加入 PATH（确保 uvicorn/streamlit 可执行）
-for /f "tokens=*" %%i in ('python -c "import sysconfig; print(sysconfig.get_path('scripts'))"') do set "PATH=%PATH%;%%i"
-
-:: 检查依赖
-echo [1/3] 检查依赖...
-python -c "import streamlit, fastapi, pandas, watchfiles" >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [INFO] 正在安装依赖...
-    pip install -r requirements.txt -q
-    if %errorlevel% neq 0 (
-        echo [ERROR] 依赖安装失败
+if not exist ".venv\Scripts\python.exe" (
+    echo [INFO] Creating local virtual environment: .venv
+    python -m venv .venv
+    if errorlevel 1 (
+        echo [ERROR] Failed to create virtual environment.
         pause
         exit /b 1
     )
-    :: 确保 watchfiles 已安装（uvicorn --reload 需要）
-    pip install watchfiles -q 2>nul
 )
-echo       依赖检查完成
 
-:: 启动后端
-echo [2/3] 启动后端 API (port 8000)...
-start "梧桐引力-后端" cmd /c "cd /d "%~dp0" && python -m uvicorn backend.api.main:app --host 0.0.0.0 --port 8000 --reload"
+set "PYTHON=%PROJECT_DIR%\.venv\Scripts\python.exe"
+set "PATH=%PROJECT_DIR%\.venv\Scripts;%PATH%"
 
-:: 等待后端启动
-echo       等待后端就绪...
-timeout /t 3 /nobreak >nul
+rem Clear global pip/proxy variables that can break dependency installation.
+set "HTTP_PROXY="
+set "HTTPS_PROXY="
+set "http_proxy="
+set "https_proxy="
+set "ALL_PROXY="
+set "all_proxy="
+set "PIP_NO_INDEX="
+set "PIP_DISABLE_PIP_VERSION_CHECK=1"
+set "PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple"
+set "PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn"
 
-:: 启动前端（使用 python -m 方式避免 PATH 问题）
-echo [3/3] 启动前端 Web (port 8501)...
-start "梧桐引力-前端" cmd /c "cd /d "%~dp0" && python -m streamlit run frontend/app.py --server.port 8501 --server.address 0.0.0.0"
+if not exist "requirements.txt" (
+    echo [ERROR] requirements.txt was not found. Please run this file from the project root.
+    pause
+    exit /b 1
+)
+
+echo [1/3] Checking dependencies...
+"%PYTHON%" -c "import streamlit, fastapi, pandas, watchfiles, uvicorn, langchain_openai, duckdb, sklearn, yaml" >nul 2>&1
+if errorlevel 1 (
+    echo [INFO] Installing dependencies. First run may take several minutes...
+    "%PYTHON%" -m pip install -r requirements.txt --prefer-binary --timeout 30 --retries 3 --index-url "%PIP_INDEX_URL%" --trusted-host "%PIP_TRUSTED_HOST%"
+    if errorlevel 1 (
+        echo [WARN] Full install failed. Retrying without optional prophet package...
+        findstr /V /R /C:"^prophet" requirements.txt > "%TEMP%\wutong-requirements-core.txt"
+        "%PYTHON%" -m pip install -r "%TEMP%\wutong-requirements-core.txt" --prefer-binary --timeout 30 --retries 3 --index-url "%PIP_INDEX_URL%" --trusted-host "%PIP_TRUSTED_HOST%"
+        if errorlevel 1 (
+            echo [ERROR] Dependency installation failed.
+            echo Run this manually to see details:
+            echo "%PYTHON%" -m pip install -r requirements.txt --prefer-binary --index-url "%PIP_INDEX_URL%" --trusted-host "%PIP_TRUSTED_HOST%"
+            pause
+            exit /b 1
+        )
+    )
+)
+echo       Dependencies are ready.
+
+set "API_BASE=http://127.0.0.1:8000"
+
+echo [2/3] Starting backend API on port 8000...
+start "Wutong Backend" /D "%PROJECT_DIR%" cmd /k call "%PYTHON%" -m uvicorn backend.api.main:app --host 127.0.0.1 --port 8000 --reload
+
+echo       Waiting for backend startup...
+timeout /t 5 /nobreak >nul
+
+echo [3/3] Starting frontend Web on port 8501...
+start "Wutong Frontend" /D "%PROJECT_DIR%" cmd /k call "%PYTHON%" -m streamlit run frontend/app.py --server.port 8501 --server.address 127.0.0.1
 
 echo.
 echo ========================================
-echo   启动完成！
-echo   后端 API:  http://localhost:8000
-echo   前端界面:  http://localhost:8501
-echo   API 文档:  http://localhost:8000/api/docs
+echo   Started
+echo   Backend API:  http://127.0.0.1:8000
+echo   Frontend:     http://127.0.0.1:8501
+echo   API Docs:     http://127.0.0.1:8000/api/docs
 echo ========================================
 echo.
-echo 按任意键打开前端界面...
+echo If the frontend says the backend is disconnected, wait a few seconds and refresh.
+echo Press any key to open the frontend...
 pause >nul
-start http://localhost:8501
+start http://127.0.0.1:8501

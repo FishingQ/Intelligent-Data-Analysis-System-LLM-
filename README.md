@@ -86,6 +86,7 @@
 chmod +x start.sh && ./start.sh
 ```
 
+
 ### 方式二：Docker部署
 
 ```bash

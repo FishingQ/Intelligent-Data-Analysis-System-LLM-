@@ -29,7 +29,7 @@ psycopg2-binary>=2.9.9
 pandas>=2.2.0
 numpy>=1.26.0
 openpyxl>=3.1.2       # Excel读写
-duckdb>=0.10.0        # 让Excel/CSV支持SQL查询
+duckdB>=0.10.0        # 让Excel/CSV支持SQL查询
 
 # ---- SQL工具 ----
 sqlparse>=0.5.0
