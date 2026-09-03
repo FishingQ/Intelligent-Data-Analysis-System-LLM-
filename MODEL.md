@@ -46,16 +46,26 @@ setx OPENAI_BASE_URL "https://api.openai.com/v1"
 
 ### 2.2 九天大模型 (中国移动)
 
+九天平台「应用接入」新建应用并关联推理服务后，复制 **AppCode**，通过 `Authorization: Bearer <AppCode>` 鉴权调用 `generate_stream` 推理接口。
+
 ```bash
-setx DEEPSEEK_API_KEY "your-jiutian-key"
-setx LLM_MODEL "jiutian-large"
-setx OPENAI_BASE_URL "https://jiutian-api.chinamobile.com/v1"
+# 配置 AppCode (九天平台「应用接入」复制)
+setx JIUTIAN_APP_CODE "your-appcode"
+```
+
+默认 provider 已切到 jiutian，见 `config/settings.yaml`：
+
+```yaml
+llm:
+  provider: "jiutian"
+  model: ""                              # 单模型部署可不填
+  base_url: "http://127.0.0.1:8090/generate_stream"
 ```
 
 | 优势 | 劣势 |
 |------|------|
 | 运营商自有，内网可用 | 模型能力可能不及通用大模型 |
-| 数据不出内网，安全性高 | — |
+| 数据不出内网，安全性高 | 需本地推理服务在线 (8090) |
 
 ### 2.3 Qwen (通义千问)
 
@@ -188,7 +198,8 @@ curl http://localhost:8000/api/health
 
 | 变量 | 必填 | 默认值 | 说明 |
 |------|------|--------|------|
-| `DEEPSEEK_API_KEY` | 是 | — | LLM API密钥 |
+| `JIUTIAN_APP_CODE` | 是(默认jiutian) | — | 九天平台 AppCode (Bearer 鉴权) |
+| `DEEPSEEK_API_KEY` | 否(切deepseek时) | — | DeepSeek API密钥 |
 | `LLM_MODEL` | 否 | `deepseek-chat` | 模型名称 |
 | `OPENAI_BASE_URL` | 否 | `https://api.deepseek.com/v1` | API地址 |
 | `LLM_TEMPERATURE` | 否 | `0.1` | 生成温度(0-1) |

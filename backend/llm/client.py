@@ -9,6 +9,8 @@ from typing import Optional, Dict, Any, List
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 
+from backend.llm.jiutian_adapter import JiutianChatModel
+
 logger = logging.getLogger(__name__)
 
 
@@ -22,8 +24,8 @@ PROVIDER_DEFAULTS = {
         "model": "deepseek-chat",
     },
     "jiutian": {
-        "base_url": "https://jiutian-api.chinamobile.com/v1",
-        "model": "jiutian-large",
+        "base_url": "http://127.0.0.1:8090/generate_stream",
+        "model": "",   # 九天单模型部署可不填模型名
     },
     "openai": {
         "base_url": "https://api.openai.com/v1",
@@ -71,20 +73,34 @@ class LLMClient:
         self.provider = provider
         self.model_name = model or defaults["model"]
         self.base_url = base_url or defaults["base_url"]
-        self.api_key = api_key or os.getenv(f"{provider.upper()}_API_KEY", "")
+        _env_key = "JIUTIAN_APP_CODE" if provider == "jiutian" else f"{provider.upper()}_API_KEY"
+        self.api_key = api_key or os.getenv(_env_key, "")
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.timeout = timeout
+        self.max_retries = max_retries
 
-        # ---- LangChain ChatOpenAI 实例 ----
-        self._chat: ChatOpenAI = ChatOpenAI(
-            model=self.model_name,
-            api_key=self.api_key,
-            base_url=self.base_url,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            timeout=timeout,
-            max_retries=max_retries,
-        )
+        # ---- LLM 后端实例 ----
+        if provider == "jiutian":
+            # 九天 generate_stream 推理服务 (AppCode Bearer 鉴权)
+            self._chat = JiutianChatModel(
+                base_url=self.base_url,
+                app_code=self.api_key,
+                model_name=self.model_name,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                timeout=timeout,
+            )
+        else:
+            self._chat: ChatOpenAI = ChatOpenAI(
+                model=self.model_name,
+                api_key=self.api_key,
+                base_url=self.base_url,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                timeout=timeout,
+                max_retries=max_retries,
+            )
 
         logger.info(
             f"LangChain LLM 已初始化: provider={provider}, "
@@ -133,9 +149,18 @@ class LLMClient:
         """LangChain 风格: invoke(prompt) → str"""
         return self._invoke([HumanMessage(content=prompt)], temperature)
 
-    def get_chat_model(self, temperature: Optional[float] = None) -> ChatOpenAI:
-        """获取 ChatOpenAI 实例（用于 LangChain Chain 组合）"""
+    def get_chat_model(self, temperature: Optional[float] = None):
+        """获取 LLM 实例（用于 LangChain Chain 组合）"""
         if temperature is not None and temperature != self.temperature:
+            if self.provider == "jiutian":
+                return JiutianChatModel(
+                    base_url=self.base_url,
+                    app_code=self.api_key,
+                    model_name=self.model_name,
+                    temperature=temperature,
+                    max_tokens=self.max_tokens,
+                    timeout=self.timeout,
+                )
             return ChatOpenAI(
                 model=self.model_name,
                 api_key=self.api_key,

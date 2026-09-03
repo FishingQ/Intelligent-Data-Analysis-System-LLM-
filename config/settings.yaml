@@ -10,9 +10,9 @@
 # ---- LLM 大模型配置 ----
 # api_key 从环境变量 DEEPSEEK_API_KEY 读取，不在此文件中存储
 llm:
-  provider: "deepseek"              # deepseek | jiutian | openai | qwen
-  model: "deepseek-chat"
-  base_url: "https://api.deepseek.com/v1"
+  provider: "jiutian"               # deepseek | jiutian | openai | qwen
+  model: ""                         # 九天单模型部署可不填模型名
+  base_url: "http://127.0.0.1:8090/generate_stream"
   temperature: 0.1                  # SQL生成用低温保证确定性
   max_tokens: 4096
   timeout: 60                       # 请求超时(秒)

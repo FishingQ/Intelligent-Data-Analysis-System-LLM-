@@ -109,9 +109,9 @@ pip install -r requirements.txt
 
 ```bash
 cp .env.example .env
-# 编辑 .env，填入 LLM API Key
-# Windows: setx DEEPSEEK_API_KEY "sk-your-key"
-# Linux/Mac: export DEEPSEEK_API_KEY="sk-your-key"
+# 编辑 .env，填入九天平台 AppCode（在「应用接入」复制）
+# Windows: setx JIUTIAN_APP_CODE "你的AppCode"
+# Linux/Mac: export JIUTIAN_APP_CODE="你的AppCode"
 ```
 
 #### 3. 启动后端
@@ -134,7 +134,7 @@ streamlit run frontend/app.py
 |------|------|------|
 | **后端框架** | Python FastAPI | 高性能异步API |
 | **前端** | Streamlit + ECharts | 对话式Web界面 |
-| **LLM** | DeepSeek / 九天大模型 / OpenAI | 兼容OpenAI API的大模型 |
+| **LLM** | 九天大模型 / DeepSeek / OpenAI | 多后端（九天 generate_stream / OpenAI 兼容） |
 | **数据处理** | Pandas + NumPy + DuckDB | 多格式数据分析引擎 |
 | **数据库** | SQLite / MySQL / PostgreSQL | 关系型数据源 |
 | **机器学习** | Scikit-learn + Prophet | 异常检测 + 时序预测 |

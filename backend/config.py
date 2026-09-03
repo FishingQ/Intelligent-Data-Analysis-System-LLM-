@@ -29,7 +29,7 @@ _SECRET_ENV_MAP = {
         "deepseek_api_key",
         "DEEPSEEK_KEY",
     ],
-    "llm.jiutian_api_key":  ["JIUTIAN_API_KEY"],
+    "llm.jiutian_api_key":  ["JIUTIAN_APP_CODE", "JIUTIAN_API_KEY"],
     "llm.openai_api_key":   ["OPENAI_API_KEY"],
     "llm.qwen_api_key":     ["QWEN_API_KEY"],
 }
@@ -189,9 +189,16 @@ def load_config(config_path: Optional[str] = None) -> dict:
 def get_llm_config() -> dict:
     """获取 LLM 配置"""
     cfg = load_config()
+    provider = cfg.get("llm.provider", "deepseek")
+    api_key = {
+        "deepseek": cfg.get("llm.api_key", ""),
+        "jiutian":  cfg.get("llm.jiutian_api_key", ""),
+        "openai":   cfg.get("llm.openai_api_key", ""),
+        "qwen":     cfg.get("llm.qwen_api_key", ""),
+    }.get(provider, "") or cfg.get("llm.api_key", "")
     return {
-        "provider":    cfg.get("llm.provider", "deepseek"),
-        "api_key":     cfg.get("llm.api_key", ""),
+        "provider":    provider,
+        "api_key":     api_key,
         "model":       cfg.get("llm.model", "deepseek-chat"),
         "base_url":    cfg.get("llm.base_url", "https://api.deepseek.com/v1"),
         "temperature": cfg.get("llm.temperature", 0.1),
@@ -238,26 +245,11 @@ def check_api_key() -> bool:
 # 内部工具
 # ============================================================
 
-def _set_nested(d: dict, keys: list, value: Any):
-    """设置嵌套字典值: d['a.b.c'] → d['a']['b']['c']"""
-    for key in keys[:-1]:
-        if key not in d:
-            d[key] = {}
-        d = d[key]
-    d[keys[-1]] = value
-
-
 def _flatten_update(target: dict, source: dict, prefix: str = ""):
-    """将嵌套 YAML 配置扁平化更新到 target"""
+    """将嵌套 YAML 扁平化为点分键 (如 llm.model)，匹配 _DEFAULTS 与 get_*_config 的读取方式"""
     for key, value in source.items():
         full_key = f"{prefix}.{key}" if prefix else key
-        if isinstance(value, dict) and not any(
-            isinstance(v, (dict, list)) for v in value.values()
-        ):
-            # 叶子节点dict → 逐个设置
-            for sub_key, sub_val in value.items():
-                _set_nested(target, f"{full_key}.{sub_key}".split("."), sub_val)
-        elif isinstance(value, dict):
+        if isinstance(value, dict):
             _flatten_update(target, value, full_key)
         else:
-            _set_nested(target, full_key.split("."), value)
+            target[full_key] = value
