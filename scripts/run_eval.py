@@ -109,7 +109,7 @@ def compare_sql(generated: str, expected: str) -> str:
 def run_structured_eval(dataset_name: str, limit: int = 0) -> EvalReport:
     """评测结构化 NL2SQL 数据集"""
     from backend.training.dataset_loader import DatasetLoader
-    from backend.llm.client import LLMClient
+    from backend.llm.client import create_llm_client
     from backend.nlp.intent_classifier import IntentClassifier
     from backend.nlp.schema_mapper import SchemaMapper
     from backend.nlp.nl2sql_generator import NL2SQLGenerator
@@ -131,7 +131,7 @@ def run_structured_eval(dataset_name: str, limit: int = 0) -> EvalReport:
     # 初始化服务
     print(f"评测 {dataset_name} ({len(tasks)} 条任务)...")
     try:
-        llm = LLMClient()
+        llm = create_llm_client()
         intent_clf = IntentClassifier(llm)
         schema_mapper = SchemaMapper()
         nl2sql = NL2SQLGenerator(llm)
@@ -227,9 +227,10 @@ def run_structured_eval(dataset_name: str, limit: int = 0) -> EvalReport:
 
 
 def run_unstructured_eval(dataset_name: str, limit: int = 0) -> EvalReport:
-    """评测非结构化 RAG 数据集"""
+    """评测非结构化 RAG 数据集（向量召回 + LLM 作答）"""
     from backend.training.dataset_loader import DatasetLoader
-    from backend.llm.client import LLMClient
+    from backend.llm.client import create_llm_client
+    from backend.rag.pipeline import RAGPipeline, load_or_build_retriever
 
     loader = DatasetLoader(base_dir=str(PROJECT_ROOT))
     ds = loader.load_unstructured(dataset_name)
@@ -242,9 +243,13 @@ def run_unstructured_eval(dataset_name: str, limit: int = 0) -> EvalReport:
 
     print(f"评测 {dataset_name} ({len(tasks)} 条任务)...")
     try:
-        llm = LLMClient()
+        llm = create_llm_client()
+        index_dir = str(PROJECT_ROOT / "data" / "rag_index" / dataset_name)
+        print(f"  构建/加载向量索引: {index_dir}")
+        store = load_or_build_retriever(ds.data_paths, index_dir=index_dir)
+        rag = RAGPipeline(store=store, llm=llm, top_k=3)
     except Exception as e:
-        print(f"[ERROR] 初始化 LLM 失败: {e}")
+        print(f"[ERROR] 初始化 RAG 失败: {e}")
         return report
 
     for i, task in enumerate(tasks):
@@ -256,15 +261,7 @@ def run_unstructured_eval(dataset_name: str, limit: int = 0) -> EvalReport:
 
         t0 = time.time()
         try:
-            # 构造 RAG prompt
-            context = loader.get_context_for_task(task)
-            prompt = (
-                f"根据以下数据回答问题：\n\n"
-                f"=== 数据 ===\n{context}\n\n"
-                f"=== 问题 ===\n{task.question}\n\n"
-                f"请直接给出答案。"
-            )
-            response = llm.chat(prompt)
+            response = rag.answer(task.question)
             result.answer_text = response
             result.elapsed_ms = (time.time() - t0) * 1000
 

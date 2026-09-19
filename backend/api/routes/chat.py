@@ -110,6 +110,17 @@ async def chat(request: ChatRequest):
                 error="问题为空",
             )
 
+        # Step 0.5: 检查 LLM 鉴权是否配置（否则模型调用会静默失败）
+        if not getattr(_llm_client, "api_key", None):
+            return ChatResponse(
+                conversation_id=request.conversation_id,
+                answer_text=(
+                    "模型调用失败：LLM API Key 未配置。\n\n"
+                    "请设置环境变量 DEEPSEEK_API_KEY 并重启后端服务。"
+                ),
+                error="API Key 未配置",
+            )
+
         # Step 1: 获取数据源和 Schema
         source_configs = get_active_sources(request.data_source_ids)
         if not source_configs:

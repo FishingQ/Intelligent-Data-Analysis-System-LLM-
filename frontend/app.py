@@ -20,7 +20,6 @@ if PROJECT_ROOT not in sys.path:
 # ---- 页面配置 ----
 st.set_page_config(
     page_title="智能数据分析助手",
-    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -28,6 +27,9 @@ st.set_page_config(
 # ---- 后端API地址 ----
 # 本地开发默认 localhost，云端部署时设置环境变量 API_BASE 或 BACKEND_URL
 API_BASE = os.getenv("API_BASE", os.getenv("BACKEND_URL", "http://localhost:8000"))
+
+# 知识库文档支持的类型（Word / PDF / 图片 / 文本）
+RAG_DOC_TYPES = ["pdf", "docx", "png", "jpg", "jpeg", "bmp", "webp", "txt", "md", "markdown"]
 
 
 # ============================================================
@@ -49,6 +51,9 @@ def init_state():
         "current_anomaly": None,  # 异常检测结果
         "current_forecast": None, # 时序预测结果
         "current_report": None,   # 分析报告
+        # 知识库
+        "analysis_mode": "结构化数据分析",  # 结构化数据分析 / 知识库问答
+        "rag_docs": [],           # 已上传的知识库文档名
     }
     for key, default in defaults.items():
         if key not in st.session_state:
@@ -59,17 +64,25 @@ init_state()
 
 
 # ============================================================
-# 侧边栏: 数据源管理 + 系统状态
+# 侧边栏: 数据源管理 + 知识库 + 系统状态
 # ============================================================
 
 with st.sidebar:
-    st.title("📊 智能数据分析")
+    st.title("智能数据分析")
     st.caption("AI驱动的对话式数据分析工具")
+
+    # ---- 分析模式 ----
+    st.radio(
+        "分析模式",
+        ["结构化数据分析", "知识库问答"],
+        key="analysis_mode",
+        horizontal=True,
+    )
 
     # ---- 新建对话 ----
     col_new, col_clear = st.columns([3, 1])
     with col_new:
-        if st.button("➕ 新建对话", use_container_width=True):
+        if st.button("新建对话", use_container_width=True):
             st.session_state.conversation_id = str(uuid.uuid4())
             st.session_state.messages = []
             st.session_state.current_chart = None
@@ -80,7 +93,7 @@ with st.sidebar:
             st.session_state.current_report = None
             st.rerun()
     with col_clear:
-        if st.button("🗑️", help="清除所有数据源"):
+        if st.button("清除", help="清除所有数据源"):
             for sid in st.session_state.active_sources:
                 try:
                     requests.delete(f"{API_BASE}/api/datasources/{sid}", timeout=5)
@@ -93,7 +106,7 @@ with st.sidebar:
     st.divider()
 
     # ---- 历史对话 ----
-    st.subheader("💬 历史对话")
+    st.subheader("历史对话")
 
     # 获取会话列表
     try:
@@ -109,7 +122,7 @@ with st.sidebar:
 
                     col_conv, col_del = st.columns([4, 1])
                     with col_conv:
-                        label = f"{'🔵 ' if is_active else ''}{title} ({msg_count})"
+                        label = f"{title} ({msg_count})"
                         if st.button(
                             label,
                             key=f"conv_{sid}",
@@ -140,7 +153,7 @@ with st.sidebar:
                             st.session_state.current_report = None
                             st.rerun()
                     with col_del:
-                        if st.button("✕", key=f"del_{sid}", help=f"删除: {title}"):
+                        if st.button("删除", key=f"del_{sid}", help=f"删除: {title}"):
                             try:
                                 requests.delete(
                                     f"{API_BASE}/api/conversations/{sid}",
@@ -164,78 +177,119 @@ with st.sidebar:
 
     st.divider()
 
-    # ---- 数据源上传 ----
-    st.subheader("📁 数据源管理")
+    if st.session_state.analysis_mode == "结构化数据分析":
+        # ---- 数据源上传 ----
+        st.subheader("数据源管理")
 
-    uploaded_file = st.file_uploader(
-        "上传数据文件",
-        type=["xlsx", "xls", "csv", "sqlite", "db"],
-        help="支持 Excel、CSV、SQLite 文件，最大50MB",
-        key="file_uploader",
-    )
+        uploaded_file = st.file_uploader(
+            "上传数据文件",
+            type=["xlsx", "xls", "csv", "sqlite", "db"],
+            help="支持 Excel、CSV、SQLite 文件，最大50MB",
+            key="file_uploader",
+        )
 
-    if uploaded_file:
-        # 用文件名+大小做指纹，避免 st.rerun() 后重复上传
-        file_fingerprint = f"{uploaded_file.name}_{uploaded_file.size}"
-        if st.session_state.get("_last_uploaded") == file_fingerprint:
-            pass  # 已处理过，跳过
-        else:
-            with st.spinner("正在解析数据文件..."):
-                try:
-                    files = {"file": (uploaded_file.name, uploaded_file.getvalue())}
-                    resp = requests.post(
-                        f"{API_BASE}/api/datasources/upload",
-                        files=files,
-                        timeout=120,
-                    )
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        sid = data["source_id"]
-                        st.session_state.sources_info[sid] = {
-                            "display_name": data["display_name"],
-                            "source_type": data["source_type"],
-                            "tables": data.get("tables", []),
-                        }
-                        if sid not in st.session_state.active_sources:
-                            st.session_state.active_sources.append(sid)
-                        st.session_state["_last_uploaded"] = file_fingerprint
-                        st.success(f"✅ {data['display_name']} 已加载 ({len(data.get('tables',[]))} 张表)")
-                        st.rerun()
+        if uploaded_file:
+            # 用文件名+大小做指纹，避免 st.rerun() 后重复上传
+            file_fingerprint = f"{uploaded_file.name}_{uploaded_file.size}"
+            if st.session_state.get("_last_uploaded") != file_fingerprint:
+                with st.spinner("正在解析数据文件..."):
+                    try:
+                        files = {"file": (uploaded_file.name, uploaded_file.getvalue())}
+                        resp = requests.post(
+                            f"{API_BASE}/api/datasources/upload",
+                            files=files,
+                            timeout=120,
+                        )
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            sid = data["source_id"]
+                            st.session_state.sources_info[sid] = {
+                                "display_name": data["display_name"],
+                                "source_type": data["source_type"],
+                                "tables": data.get("tables", []),
+                            }
+                            if sid not in st.session_state.active_sources:
+                                st.session_state.active_sources.append(sid)
+                            st.session_state["_last_uploaded"] = file_fingerprint
+                            st.success(f"{data['display_name']} 已加载 ({len(data.get('tables',[]))} 张表)")
+                            st.rerun()
+                        else:
+                            detail = resp.json().get("detail", resp.text)
+                            st.error(f"上传失败: {detail}")
+                    except requests.ConnectionError:
+                        st.warning("后端服务未启动。请在终端执行:")
+                        st.code("uvicorn backend.api.main:app --reload --port 8000")
+                    except Exception as e:
+                        st.error(f"上传异常: {e}")
+
+        # ---- 已连接的数据源 ----
+        if st.session_state.active_sources:
+            st.caption(f"已连接 {len(st.session_state.active_sources)} 个数据源:")
+            for sid in st.session_state.active_sources:
+                info = st.session_state.sources_info.get(sid, {})
+                name = info.get("display_name", sid[:8])
+                dtype = info.get("source_type", "?")
+                tables = info.get("tables", [])
+
+                with st.expander(f"{name} ({dtype})"):
+                    if tables:
+                        for t in tables:
+                            tn = t.get("table_name", "?")
+                            rc = t.get("row_count", 0)
+                            cc = len(t.get("columns", []))
+                            st.caption(f"  {tn}: {rc}行 × {cc}列")
                     else:
-                        detail = resp.json().get("detail", resp.text)
-                        st.error(f"上传失败: {detail}")
-                except requests.ConnectionError:
-                    st.warning("⚠️ 后端服务未启动。请在终端执行:")
-                    st.code("uvicorn backend.api.main:app --reload --port 8000")
-                except Exception as e:
-                    st.error(f"上传异常: {e}")
+                        st.caption("  （暂无表信息）")
+    else:
+        # ---- 知识库文档上传 ----
+        st.subheader("知识库管理")
 
-    # ---- 已连接的数据源 ----
-    if st.session_state.active_sources:
-        st.caption(f"📌 已连接 {len(st.session_state.active_sources)} 个数据源:")
-        for sid in st.session_state.active_sources:
-            info = st.session_state.sources_info.get(sid, {})
-            name = info.get("display_name", sid[:8])
-            dtype = info.get("source_type", "?")
-            tables = info.get("tables", [])
+        rag_file = st.file_uploader(
+            "上传文档（Word / PDF / 图片）",
+            type=RAG_DOC_TYPES,
+            help="支持 Word、PDF、图片（自动OCR）、文本文件",
+            key="rag_uploader",
+        )
 
-            with st.expander(f"{name} ({dtype})"):
-                if tables:
-                    for t in tables:
-                        tn = t.get("table_name", "?")
-                        rc = t.get("row_count", 0)
-                        cc = len(t.get("columns", []))
-                        st.caption(f"  📋 {tn}: {rc}行 × {cc}列")
-                else:
-                    st.caption("  （暂无表信息）")
+        if rag_file:
+            fp = f"{rag_file.name}_{rag_file.size}"
+            if st.session_state.get("_last_rag_upload") != fp:
+                with st.spinner("正在解析文档..."):
+                    try:
+                        resp = requests.post(
+                            f"{API_BASE}/api/rag/upload",
+                            files={"file": (rag_file.name, rag_file.getvalue())},
+                            timeout=300,
+                        )
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            st.session_state.rag_docs.append(data["filename"])
+                            st.session_state["_last_rag_upload"] = fp
+                            st.success(f"{data['filename']} 已入库（{data['chunks']} 个片段）")
+                            st.rerun()
+                        else:
+                            detail = resp.json().get("detail", resp.text)
+                            st.error(f"上传失败: {detail}")
+                    except requests.ConnectionError:
+                        st.warning("后端服务未启动")
+                    except Exception as e:
+                        st.error(f"上传异常: {e}")
+
+        # ---- 已上传文档 ----
+        if st.session_state.rag_docs:
+            st.caption(f"已上传 {len(st.session_state.rag_docs)} 篇文档:")
+            for doc in st.session_state.rag_docs:
+                st.caption(f"- {doc}")
+        else:
+            st.caption("尚未上传文档")
 
     st.divider()
 
     # ---- 系统状态 ----
-    st.subheader("🔧 系统状态")
+    st.subheader("系统状态")
     col_status, col_refresh = st.columns([3, 1])
     with col_refresh:
-        if st.button("🔄", help="刷新状态"):
+        if st.button("刷新", help="刷新状态"):
             st.rerun()
 
     try:
@@ -257,22 +311,30 @@ with st.sidebar:
 # 主区域: 对话界面
 # ============================================================
 
-st.title("🤖 智能数据分析助手")
+st.title("智能数据分析助手")
 st.caption("用自然语言提问，AI自动查询数据并生成可视化图表")
 
 # ---- 快捷提问 ----
 with st.container():
-    st.markdown("**💡 快捷提问:**")
+    st.markdown("**快捷提问:**")
     quick_cols = st.columns(4)
-    quick_questions = [
-        ("📊", "统计总体数据概况"),
-        ("📈", "查看各项指标排名"),
-        ("🔍", "查找异常数据"),
-        ("📋", "生成分析报告"),
-    ]
-    for i, (icon, text) in enumerate(quick_questions):
+    if st.session_state.analysis_mode == "知识库问答":
+        quick_questions = [
+            "总结文档内容",
+            "文档讲了什么",
+            "提取关键信息",
+            "根据文档回答",
+        ]
+    else:
+        quick_questions = [
+            "统计总体数据概况",
+            "查看各项指标排名",
+            "查找异常数据",
+            "生成分析报告",
+        ]
+    for i, text in enumerate(quick_questions):
         with quick_cols[i]:
-            if st.button(f"{icon} {text}", key=f"quick_{i}", use_container_width=True):
+            if st.button(text, key=f"quick_{i}", use_container_width=True):
                 st.session_state.pending_question = text
 
 st.divider()
@@ -295,13 +357,13 @@ with chat_container:
 
 if st.session_state.current_chart or st.session_state.current_table or st.session_state.current_report:
     st.divider()
-    st.subheader("📊 分析结果")
+    st.subheader("分析结果")
 
     # ---- Phase 3: 分析报告 ----
     if st.session_state.current_report:
         report = st.session_state.current_report
         with st.container():
-            st.markdown(f"### 📋 {report.get('title', '数据洞察报告')}")
+            st.markdown(f"### {report.get('title', '数据洞察报告')}")
 
             # 指标卡片
             metrics = report.get("key_metrics", [])
@@ -327,14 +389,14 @@ if st.session_state.current_chart or st.session_state.current_table or st.sessio
             with insight_cols[0]:
                 insights = report.get("insights", [])
                 if insights:
-                    st.markdown("**💡 关键洞察**")
+                    st.markdown("**关键洞察**")
                     for ins in insights:
                         st.markdown(f"- {ins}")
 
             with insight_cols[1]:
                 recommendations = report.get("recommendations", [])
                 if recommendations:
-                    st.markdown("**🎯 决策建议**")
+                    st.markdown("**决策建议**")
                     for rec in recommendations:
                         st.markdown(f"- {rec}")
 
@@ -343,16 +405,16 @@ if st.session_state.current_chart or st.session_state.current_table or st.sessio
         anomaly = st.session_state.current_anomaly
         anomaly_count = anomaly.get("anomaly_count", 0)
         if anomaly_count > 0:
-            with st.expander(f"🔍 异常检测：发现 {anomaly_count} 个异常点（{anomaly.get('method', '?')}法）", expanded=True):
+            with st.expander(f"异常检测：发现 {anomaly_count} 个异常点（{anomaly.get('method', '?')}法）", expanded=True):
                 st.caption(f"总行数: {anomaly.get('total_rows', 0)} | 异常率: {anomaly.get('anomaly_rate', 0):.1%}")
 
                 anomalies = anomaly.get("anomalies", [])
                 if anomalies:
                     anomaly_data = []
                     for a in anomalies[:20]:
-                        sev_icon = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(a.get("severity", ""), "⚪")
+                        sev_label = {"high": "高", "medium": "中", "low": "低"}.get(a.get("severity", ""), "-")
                         anomaly_data.append({
-                            "严重度": sev_icon,
+                            "严重度": sev_label,
                             "行": a.get("row_index", ""),
                             "列": a.get("column", ""),
                             "值": a.get("value", ""),
@@ -371,8 +433,8 @@ if st.session_state.current_chart or st.session_state.current_table or st.sessio
         fc_points = forecast.get("forecast", [])
         if fc_points:
             direction = forecast.get("trend_direction", "flat")
-            direction_icon = {"up": "📈", "down": "📉", "flat": "➡️"}.get(direction, "➡️")
-            with st.expander(f"{direction_icon} 趋势预测：{len(fc_points)}期 | 方向：{direction}", expanded=False):
+            direction_label = {"up": "上升", "down": "下降", "flat": "平稳"}.get(direction, "平稳")
+            with st.expander(f"趋势预测：{len(fc_points)}期 | 方向：{direction_label}", expanded=False):
                 st.caption(f"趋势强度: {forecast.get('trend_strength', 0):+.2%}")
                 fc_data = []
                 for p in fc_points:
@@ -419,7 +481,7 @@ if st.session_state.current_chart or st.session_state.current_table or st.sessio
 
     # SQL 展示
     if st.session_state.current_sql:
-        with st.expander("🔍 查看生成的SQL语句"):
+        with st.expander("查看生成的SQL语句"):
             st.code(st.session_state.current_sql, language="sql")
 
 
@@ -437,15 +499,70 @@ user_input = st.chat_input(
 # 处理问题的主函数
 # ============================================================
 
+def _process_rag_question(question: str):
+    """知识库问答模式：调用 /api/rag/answer"""
+    if not st.session_state.rag_docs:
+        with st.chat_message("assistant"):
+            st.warning(
+                "请先在左侧边栏上传知识库文档（Word / PDF / 图片），"
+                "然后开始提问。"
+            )
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": "请先在左侧边栏上传知识库文档（Word / PDF / 图片），然后开始提问。"
+        })
+        return
+
+    st.session_state.messages.append({"role": "user", "content": question})
+
+    with st.chat_message("assistant"):
+        status_area = st.empty()
+        try:
+            status_area.markdown("*正在检索知识库...*")
+            resp = requests.post(
+                f"{API_BASE}/api/rag/answer",
+                json={"question": question},
+                timeout=180,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                answer = data.get("answer", "未能获取回答")
+                status_area.markdown(answer)
+                st.session_state.messages.append({"role": "assistant", "content": answer})
+                sources = data.get("sources", [])
+                if sources:
+                    st.caption("参考片段：" + "、".join(s.split("#")[0] for s in sources))
+            else:
+                try:
+                    detail = resp.json().get("detail", resp.text)
+                except Exception:
+                    detail = resp.text
+                status_area.error(f"请求失败 ({resp.status_code}): {detail}")
+                st.session_state.messages.append({"role": "assistant", "content": f"请求失败: {detail}"})
+        except requests.ConnectionError:
+            status_area.warning("后端服务未启动，请先运行 start.bat")
+            st.session_state.messages.append({"role": "assistant", "content": "后端服务未启动。"})
+        except Exception as e:
+            status_area.error(f"处理请求时出现异常: {e}")
+            st.session_state.messages.append({"role": "assistant", "content": f"处理请求时出现异常: {e}"})
+
+    st.rerun()
+
+
 def process_question(question: str):
     """
     处理用户问题的主流程 (Phase 1 核心)
 
     1. 添加用户消息到对话
-    2. 调用后端 /api/chat
+    2. 调用后端 /api/chat（结构化）或 /api/rag/answer（知识库）
     3. 展示 AI 回答 + 图表 + 表格
     """
     if not question.strip():
+        return
+
+    # 知识库模式走独立处理流程
+    if st.session_state.analysis_mode == "知识库问答":
+        _process_rag_question(question)
         return
 
     # 检查是否有数据源
@@ -469,7 +586,7 @@ def process_question(question: str):
         status_area = st.empty()
 
         try:
-            status_area.markdown("🤔 *正在分析您的问题...*")
+            status_area.markdown("*正在分析您的问题...*")
 
             resp = requests.post(
                 f"{API_BASE}/api/chat",
@@ -537,7 +654,7 @@ def process_question(question: str):
                 # 显示追问建议
                 suggestions = data.get("suggested_questions", [])
                 if suggestions:
-                    st.caption("💡 您还可以问:")
+                    st.caption("您还可以问:")
                     sugg_cols = st.columns(len(suggestions))
                     for i, s in enumerate(suggestions):
                         with sugg_cols[i]:
@@ -551,7 +668,7 @@ def process_question(question: str):
                     detail = resp.json().get("detail", error_text)
                 except Exception:
                     detail = error_text
-                error_msg = f"❌ 请求失败 ({resp.status_code}): {detail}"
+                error_msg = f"请求失败 ({resp.status_code}): {detail}"
                 status_area.error(error_msg)
                 st.session_state.messages.append({
                     "role": "assistant",
@@ -560,7 +677,7 @@ def process_question(question: str):
 
         except requests.ConnectionError:
             error_msg = (
-                "⚠️ 后端服务未启动。\n\n"
+                "后端服务未启动。\n\n"
                 "请在终端执行以下命令启动服务:\n"
                 "```bash\n"
                 "cd 智能数据分析系统\n"
@@ -574,7 +691,7 @@ def process_question(question: str):
             })
 
         except requests.Timeout:
-            error_msg = "⏰ 请求超时。查询可能过于复杂，请简化问题后重试。"
+            error_msg = "请求超时。查询可能过于复杂，请简化问题后重试。"
             status_area.warning(error_msg)
             st.session_state.messages.append({
                 "role": "assistant",
@@ -582,7 +699,7 @@ def process_question(question: str):
             })
 
         except Exception as e:
-            error_msg = f"❌ 处理请求时出现异常: {e}"
+            error_msg = f"处理请求时出现异常: {e}"
             status_area.error(error_msg)
             st.session_state.messages.append({
                 "role": "assistant",
@@ -652,14 +769,23 @@ if user_input and user_input.strip():
 # ============================================================
 
 if not st.session_state.messages:
-    st.info(
-        "👋 欢迎使用智能数据分析助手！\n\n"
-        "**快速开始:**\n"
-        "1. 在左侧边栏上传数据文件\n"
-        "2. 在下方输入框用自然语言提问\n"
-        "3. AI将自动查询数据并生成可视化结果\n\n"
-        "**示例问题:**\n"
-        "- 统计各分类的数量\n"
-        "- 查看销售额排名前10\n"
-        "- 计算平均XX是多少"
-    )
+    if st.session_state.analysis_mode == "知识库问答":
+        st.info(
+            "欢迎使用知识库问答\n\n"
+            "**快速开始:**\n"
+            "1. 在左侧边栏上传 Word / PDF / 图片文档\n"
+            "2. 在下方输入框用自然语言提问\n"
+            "3. AI将从文档中检索并回答"
+        )
+    else:
+        st.info(
+            "欢迎使用智能数据分析助手\n\n"
+            "**快速开始:**\n"
+            "1. 在左侧边栏上传数据文件\n"
+            "2. 在下方输入框用自然语言提问\n"
+            "3. AI将自动查询数据并生成可视化结果\n\n"
+            "**示例问题:**\n"
+            "- 统计各分类的数量\n"
+            "- 查看销售额排名前10\n"
+            "- 计算平均值"
+        )

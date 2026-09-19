@@ -1,7 +1,7 @@
 """
 NL2SQL 生成器 —— 基于 LangChain
 使用 ChatPromptTemplate + StrOutputParser + 手动 JSON 解析
-(DeepSeek 对 JsonOutputParser 支持不稳定，回退到结构化 Prompt + 手动解析)
+(大模型对 JsonOutputParser 支持不稳定，回退到结构化 Prompt + 手动解析)
 """
 import json
 import re
@@ -209,7 +209,7 @@ class NL2SQLGenerator:
     @staticmethod
     def _parse_json(raw: str) -> dict:
         """
-        稳健的 JSON 解析 —— 支持 DeepSeek 各种响应格式
+        稳健的 JSON 解析 —— 兼容各种大模型响应格式
 
         策略:
         1. 直接 json.loads

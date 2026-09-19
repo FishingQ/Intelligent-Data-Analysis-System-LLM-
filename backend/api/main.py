@@ -47,7 +47,7 @@ app.add_middleware(
 def _init_services():
     """从系统环境变量加载配置，初始化 LLM 客户端和所有服务模块"""
     from backend.config import get_llm_config, check_api_key
-    from backend.llm.client import LLMClient
+    from backend.llm.client import create_llm_client
 
     # 加载 LLM 配置（从系统环境变量/注册表读取密钥）
     llm_cfg = get_llm_config()
@@ -67,26 +67,29 @@ def _init_services():
         logger.warning("  设置后需重启终端和本服务方可生效。")
         logger.warning("=" * 60)
 
-    # 使用新的 LangChain 版 LLMClient (无 LLMConfig dataclass)
-    llm_client = LLMClient(
+    llm_client = create_llm_client(
         provider=llm_cfg["provider"],
         api_key=llm_cfg["api_key"],
-        model=llm_cfg["model"],
         base_url=llm_cfg["base_url"],
+        model=llm_cfg["model"],
         temperature=llm_cfg["temperature"],
         max_tokens=llm_cfg["max_tokens"],
         timeout=llm_cfg["timeout"],
         max_retries=llm_cfg["max_retries"],
     )
+    cred = llm_cfg.get("api_key") or ""
     logger.info(
-        f"LLM客户端(LangChain): provider={llm_cfg['provider']}, "
-        f"model={llm_cfg['model']}, "
-        f"api_key={'***' + llm_cfg['api_key'][-4:] if llm_cfg['api_key'] and len(llm_cfg['api_key']) > 8 else '(未配置)'}"
+        f"LLM客户端(LangChain): provider={llm_cfg['provider']}, model={llm_cfg['model']}, "
+        f"api_key={'***' + cred[-4:] if cred and len(cred) > 8 else '(未配置)'}"
     )
 
     # 初始化 chat 路由所需的服务
     from backend.api.routes.chat import init_chat_services
     init_chat_services(llm_client)
+
+    # 初始化知识库 RAG 服务（共享同一 LLM 客户端）
+    from backend.api.routes.rag import init_rag_services
+    init_rag_services(llm_client)
 
     return llm_client
 
@@ -105,13 +108,14 @@ async def startup():
 
 
 # ---- 注册路由 ----
-from backend.api.routes import chat, datasources, conversations
+from backend.api.routes import chat, datasources, conversations, rag
 
 app.include_router(chat.router, prefix="/api", tags=["对话"])
 app.include_router(datasources.router, prefix="/api", tags=["数据源"])
 app.include_router(conversations.router, prefix="/api", tags=["会话历史"])
+app.include_router(rag.router, prefix="/api", tags=["知识库"])
 
-logger.info("路由已注册: /api/chat, /api/datasources/*, /api/conversations/*")
+logger.info("路由已注册: /api/chat, /api/datasources/*, /api/conversations/*, /api/rag/*")
 
 
 # ---- 健康检查 ----

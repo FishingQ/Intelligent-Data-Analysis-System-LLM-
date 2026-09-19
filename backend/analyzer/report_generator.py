@@ -84,7 +84,7 @@ class ReportGenerator:
 
         if self._llm:
             try:
-                llm_output = self._generate_with_llm(question, result, stats)
+                llm_output = self._generate_with_llm(question, result, stats) or {}
                 title = llm_output.get("title", title)
                 summary = llm_output.get("summary", "")
                 insights = llm_output.get("insights", [])
