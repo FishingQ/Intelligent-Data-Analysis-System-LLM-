@@ -4,9 +4,11 @@ SQL 校验器
 """
 import re
 import logging
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import sqlparse
+from sqlparse import tokens as T
+from sqlparse.sql import Identifier, IdentifierList, Parenthesis
 
 logger = logging.getLogger(__name__)
 
@@ -130,27 +132,102 @@ class SQLValidator:
 
     @staticmethod
     def _extract_table_names(sql: str) -> List[str]:
-        """从 SQL 中提取表名（简化版）"""
-        tables = set()
-        # FROM 子句
-        from_matches = re.findall(
-            r'\bFROM\s+([`"\[]?\w+[`"\]]?(?:\s*,\s*[`"\[]?\w+[`"\]]?)*)',
-            sql, re.IGNORECASE
-        )
-        for match in from_matches:
-            for t in re.split(r'\s*,\s*', match):
-                t = t.strip().strip('`"[]')
-                if t and t.upper() not in ("SELECT", "WHERE", "JOIN"):
-                    tables.add(t)
+        """从 SQL 中提取引用的真实表名。
 
-        # JOIN 子句
-        join_matches = re.findall(
-            r'\bJOIN\s+([`"\[]?\w+[`"\]]?)',
-            sql, re.IGNORECASE
-        )
-        for t in join_matches:
-            t = t.strip().strip('`"[]')
-            if t:
-                tables.add(t)
+        用 sqlparse 的 token 树解析，替代原来的正则。原正则会把
+        子查询别名（`s0`/`s1`）或数字字面量（`53`）误判成表名，
+        导致合法 SQL 被白名单拦截。
+        """
+        tables: set = set()
 
-        return list(tables)
+        for stmt in sqlparse.parse(sql):
+            cte_names = set()
+
+            # 1) 收集 WITH 子句定义的 CTE 名称，后续引用同名时跳过
+            toks = stmt.tokens
+            for i, tok in enumerate(toks):
+                if tok.ttype in T.Keyword and tok.value.upper() == "WITH":
+                    for nt in toks[i + 1:]:
+                        if nt.is_whitespace:
+                            continue
+                        if nt.ttype in T.Keyword.DML:
+                            break
+                        if isinstance(nt, IdentifierList):
+                            for cte in nt.get_identifiers():
+                                name = SQLValidator._first_name(cte)
+                                if name:
+                                    cte_names.add(name)
+                        elif isinstance(nt, Identifier):
+                            name = SQLValidator._first_name(nt)
+                            if name:
+                                cte_names.add(name)
+                        break
+
+            def add_table(ident):
+                # 子查询 `FROM (SELECT ...) alias`：只递归取内部表，忽略别名
+                if isinstance(ident, Parenthesis):
+                    walk(ident.tokens)
+                    return
+                for t in getattr(ident, "tokens", []):
+                    if isinstance(t, Parenthesis):
+                        walk(t.tokens)
+                        return
+                name = ident.get_real_name()
+                if name:
+                    name = name.strip('`"[]')
+                    if name not in cte_names:
+                        tables.add(name)
+
+            def walk(tokens):
+                i = 0
+                n = len(tokens)
+                while i < n:
+                    tok = tokens[i]
+                    if tok.is_whitespace:
+                        i += 1
+                        continue
+                    uv = tok.value.upper()
+                    if tok.ttype in T.Keyword and (uv == "FROM" or uv.split()[-1] == "JOIN"):
+                        j = i + 1
+                        while j < n and tokens[j].is_whitespace:
+                            j += 1
+                        if j < n:
+                            nt = tokens[j]
+                            if isinstance(nt, IdentifierList):
+                                for ident in nt.get_identifiers():
+                                    add_table(ident)
+                            else:
+                                add_table(nt)
+                        i = j
+                    else:
+                        if hasattr(tok, "tokens"):
+                            walk(tok.tokens)
+                        i += 1
+
+            walk(stmt.tokens)
+
+        return [t for t in tables if t]
+
+    @staticmethod
+    def _first_name(ident) -> Optional[str]:
+        """返回标识符里的第一个名称 token（表名/CTE 名），无则返回 None"""
+        for t in getattr(ident, "tokens", []):
+            if t.ttype in T.Name:
+                return t.value
+        return None
+
+
+if __name__ == "__main__":
+    # 自检：CTE 名、子查询别名、数字字面量不能被误判成表名
+    v = SQLValidator()
+    assert v._extract_table_names("SELECT * FROM Sheet0") == ["Sheet0"]
+    assert set(v._extract_table_names(
+        "WITH s0 AS (SELECT * FROM Sheet0), s1 AS (SELECT * FROM Sheet1) "
+        "SELECT * FROM s0 JOIN s1 ON s0.a = s1.a"
+    )) == {"Sheet0", "Sheet1"}
+    assert v._extract_table_names(
+        "SELECT * FROM (SELECT * FROM Sheet0 WHERE x = 53) s0"
+    ) == ["Sheet0"]
+    ok, errs, _ = v.validate("SELECT * FROM evil", ["Sheet0"], [])
+    assert not ok and "evil" in errs[0]
+    print("sql_validator 自检通过")
